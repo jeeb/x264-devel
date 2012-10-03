@@ -2082,6 +2082,21 @@ static inline void x264_reference_hierarchy_reset( x264_t *h )
         h->sh.i_mmco_remove_from_end = X264_MAX( ref + 2 - h->frames.i_max_dpb, 0 );
 }
 
+/* Don't send override syntax elements if they're not necessary. */
+static int x264_slice_list_needs_override( x264_t *h, int list )
+{
+    int active = list ? h->sh.i_num_ref_idx_l1_active : h->sh.i_num_ref_idx_l0_active;
+    int default_active = list ? h->pps->i_num_ref_idx_l1_default_active : h->pps->i_num_ref_idx_l0_default_active;
+    if( active == default_active ) return 0;              /* Simple case */
+    if( active  > default_active ) return 1;              /* Forced, since referencing a non-active reference frame would be bad. */
+    if( h->sh.b_ref_pic_list_reordering[list] ) return 1; /* If we need to send reordering flags, we can't have default > active. */
+    if( h->pps->b_weighted_pred && h->sh.i_type == SLICE_TYPE_P ) /* Can't skip it in the case of weighted pred */
+        return 1;
+    if( active <= 1 + !h->param.b_cabac )                 /* CAVLC cares about the difference between ref>2, ref==2, and ref==1. */
+        return 1;
+    return 0;
+}
+
 static inline void x264_slice_init( x264_t *h, int i_nal_type, int i_global_qp )
 {
     /* ------------------------ Create slice header  ----------------------- */
@@ -2098,11 +2113,8 @@ static inline void x264_slice_init( x264_t *h, int i_nal_type, int i_global_qp )
 
         h->sh.i_num_ref_idx_l0_active = h->i_ref[0] <= 0 ? 1 : h->i_ref[0];
         h->sh.i_num_ref_idx_l1_active = h->i_ref[1] <= 0 ? 1 : h->i_ref[1];
-        if( h->sh.i_num_ref_idx_l0_active != h->pps->i_num_ref_idx_l0_default_active ||
-            (h->sh.i_type == SLICE_TYPE_B && h->sh.i_num_ref_idx_l1_active != h->pps->i_num_ref_idx_l1_default_active) )
-        {
+        if( x264_slice_list_needs_override( h, 0 ) || (h->sh.i_type == SLICE_TYPE_B && x264_slice_list_needs_override( h, 1 )) )
             h->sh.b_num_ref_idx_override = 1;
-        }
     }
 
     if( h->fenc->i_type == X264_TYPE_BREF && h->param.b_bluray_compat && h->sh.i_mmco_command_count )
