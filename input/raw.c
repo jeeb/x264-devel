@@ -35,12 +35,18 @@ typedef struct
     uint64_t plane_size[4];
     uint64_t frame_size;
     int bit_depth;
+
+    input_depth_hnd_t *handler;
 } raw_hnd_t;
 
 static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, cli_input_opt_t *opt )
 {
     raw_hnd_t *h = calloc( 1, sizeof(raw_hnd_t) );
     if( !h )
+        return -1;
+
+    h->handler = calloc( 1, sizeof(input_depth_hnd_t) );
+    if( !h->handler )
         return -1;
 
     if( !opt->resolution )
@@ -64,6 +70,7 @@ static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, c
 
     h->bit_depth = opt->bit_depth;
     FAIL_IF_ERROR( h->bit_depth < 8 || h->bit_depth > 16, "unsupported bit depth `%d'\n", h->bit_depth );
+    h->handler->bit_depth = h->bit_depth;
     if( h->bit_depth > 8 )
         info->csp |= X264_CSP_HIGH_DEPTH;
 
@@ -73,6 +80,8 @@ static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, c
         h->fh = fopen( psz_filename, "rb" );
     if( h->fh == NULL )
         return -1;
+
+    h->handler->fh = h->fh;
 
     info->thread_safe = 1;
     info->num_frames  = 0;
@@ -85,6 +94,7 @@ static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, c
         h->frame_size += h->plane_size[i];
         /* x264_cli_pic_plane_size returns the size in bytes, we need the value in pixels from here on */
         h->plane_size[i] /= x264_cli_csp_depth_factor( info->csp );
+        h->handler->plane_size[i] = h->plane_size[i];
     }
 
     if( x264_is_regular_file( h->fh ) )
@@ -99,27 +109,6 @@ static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, c
     return 0;
 }
 
-static int read_frame_internal( cli_pic_t *pic, raw_hnd_t *h )
-{
-    int error = 0;
-    int pixel_depth = x264_cli_csp_depth_factor( pic->img.csp );
-    for( int i = 0; i < pic->img.planes && !error; i++ )
-    {
-        error |= fread( pic->img.plane[i], pixel_depth, h->plane_size[i], h->fh ) != h->plane_size[i];
-        if( h->bit_depth & 7 )
-        {
-            /* upconvert non 16bit high depth planes to 16bit using the same
-             * algorithm as used in the depth filter. */
-            uint16_t *plane = (uint16_t*)pic->img.plane[i];
-            uint64_t pixel_count = h->plane_size[i];
-            int lshift = 16 - h->bit_depth;
-            for( uint64_t j = 0; j < pixel_count; j++ )
-                plane[j] = plane[j] << lshift;
-        }
-    }
-    return error;
-}
-
 static int read_frame( cli_pic_t *pic, hnd_t handle, int i_frame )
 {
     raw_hnd_t *h = handle;
@@ -131,13 +120,13 @@ static int read_frame( cli_pic_t *pic, hnd_t handle, int i_frame )
         else
             while( i_frame > h->next_frame )
             {
-                if( read_frame_internal( pic, h ) )
+                if( read_picture_with_correct_bit_depth( pic, h->handler ) )
                     return -1;
                 h->next_frame++;
             }
     }
 
-    if( read_frame_internal( pic, h ) )
+    if( read_picture_with_correct_bit_depth( pic, h->handler ) )
         return -1;
 
     h->next_frame = i_frame+1;

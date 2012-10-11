@@ -36,6 +36,8 @@ typedef struct
     uint64_t frame_size;
     uint64_t plane_size[3];
     int bit_depth;
+
+    input_depth_hnd_t *handler;
 } y4m_hnd_t;
 
 #define Y4M_MAGIC "YUV4MPEG2"
@@ -76,6 +78,10 @@ static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, c
     if( !h )
         return -1;
 
+    h->handler = malloc( sizeof(input_depth_hnd_t) );
+    if ( !h->handler )
+        return -1;
+
     h->next_frame = 0;
     info->vfr = 0;
 
@@ -85,6 +91,8 @@ static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, c
         h->fh = fopen(psz_filename, "rb");
     if( h->fh == NULL )
         return -1;
+
+    h->handler->fh = h->fh;
 
     h->frame_header_len = strlen( Y4M_FRAME_MAGIC )+1;
 
@@ -192,10 +200,11 @@ static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, c
     FAIL_IF_ERROR( colorspace <= X264_CSP_NONE || colorspace >= X264_CSP_MAX, "colorspace unhandled\n" )
     FAIL_IF_ERROR( h->bit_depth < 8 || h->bit_depth > 16, "unsupported bit depth `%d'\n", h->bit_depth );
 
-    info->thread_safe = 1;
-    info->num_frames  = 0;
-    info->csp         = colorspace;
-    h->frame_size     = h->frame_header_len;
+    info->thread_safe     = 1;
+    info->num_frames      = 0;
+    info->csp             = colorspace;
+    h->frame_size         = h->frame_header_len;
+    h->handler->bit_depth = h->bit_depth;
 
     if( h->bit_depth > 8 )
         info->csp |= X264_CSP_HIGH_DEPTH;
@@ -208,6 +217,7 @@ static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, c
         h->frame_size += h->plane_size[i];
         /* x264_cli_pic_plane_size returns the size in bytes, we need the value in pixels from here on */
         h->plane_size[i] /= x264_cli_csp_depth_factor( info->csp );
+        h->handler->plane_size[i] = h->plane_size[i];
     }
 
     /* Most common case: frame_header = "FRAME" */
@@ -227,7 +237,6 @@ static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, c
 static int read_frame_internal( cli_pic_t *pic, y4m_hnd_t *h )
 {
     size_t slen = strlen( Y4M_FRAME_MAGIC );
-    int pixel_depth = x264_cli_csp_depth_factor( pic->img.csp );
     int i = 0;
     char header[16];
 
@@ -246,22 +255,7 @@ static int read_frame_internal( cli_pic_t *pic, y4m_hnd_t *h )
     h->frame_size = h->frame_size - h->frame_header_len + i+slen+1;
     h->frame_header_len = i+slen+1;
 
-    int error = 0;
-    for( i = 0; i < pic->img.planes && !error; i++ )
-    {
-        error |= fread( pic->img.plane[i], pixel_depth, h->plane_size[i], h->fh ) != h->plane_size[i];
-        if( h->bit_depth & 7 )
-        {
-            /* upconvert non 16bit high depth planes to 16bit using the same
-             * algorithm as used in the depth filter. */
-            uint16_t *plane = (uint16_t*)pic->img.plane[i];
-            uint64_t pixel_count = h->plane_size[i];
-            int lshift = 16 - h->bit_depth;
-            for( uint64_t j = 0; j < pixel_count; j++ )
-                plane[j] = plane[j] << lshift;
-        }
-    }
-    return error;
+    return read_picture_with_correct_bit_depth( pic, h->handler );
 }
 
 static int read_frame( cli_pic_t *pic, hnd_t handle, int i_frame )

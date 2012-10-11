@@ -109,3 +109,27 @@ const x264_cli_csp_t *x264_cli_get_csp( int csp )
         return NULL;
     return x264_cli_csps + (csp&X264_CSP_MASK);
 }
+
+int read_picture_with_correct_bit_depth( cli_pic_t *pic, input_depth_hnd_t *h )
+{
+    int i;
+    int pixel_depth = x264_cli_csp_depth_factor( pic->img.csp );
+    int error = 0;
+
+    for( i = 0; i < pic->img.planes && !error; i++ )
+    {
+        error |= fread( pic->img.plane[i], pixel_depth, h->plane_size[i], h->fh ) != h->plane_size[i];
+        if( h->bit_depth & 7 )
+        {
+            /* upconvert non 16bit high depth planes to 16bit using the same
+             * algorithm as used in the depth filter. */
+            uint16_t *plane = (uint16_t*)pic->img.plane[i];
+            uint64_t pixel_count = h->plane_size[i];
+            int lshift = 16 - h->bit_depth;
+            for( uint64_t j = 0; j < pixel_count; j++ )
+                plane[j] = plane[j] << lshift;
+        }
+    }
+
+    return error;
+}

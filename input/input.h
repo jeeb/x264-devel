@@ -129,4 +129,13 @@ uint64_t x264_cli_pic_plane_size( int csp, int width, int height, int plane );
 uint64_t x264_cli_pic_size( int csp, int width, int height );
 const x264_cli_csp_t *x264_cli_get_csp( int csp );
 
+typedef struct
+{
+    FILE *fh;
+    uint64_t plane_size[4];
+    int bit_depth;
+} input_depth_hnd_t;
+
+int read_picture_with_correct_bit_depth( cli_pic_t *pic, input_depth_hnd_t *h );
+
 #endif
