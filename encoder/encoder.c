@@ -1172,6 +1172,13 @@ static int x264_validate_parameters( x264_t *h, int b_open )
             h->param.analyse.i_mv_range = l->mv_range >> PARAM_INTERLACED;
         else
             h->param.analyse.i_mv_range = x264_clip3(h->param.analyse.i_mv_range, 32, 8192 >> PARAM_INTERLACED);
+
+        if( h->sps->vui.i_colorprim != h->param.vui.i_colorprim ||
+            h->sps->vui.i_transfer  != h->param.vui.i_transfer  ||
+            h->sps->vui.i_colmatrix != h->param.vui.i_colmatrix ) {
+            x264_log( h, X264_LOG_INFO, "PERKELE WENT HERE\n");
+            x264_sps_init( h->sps, h->param.i_sps_id, &h->param );
+        }
     }
 
     h->param.analyse.i_weighted_pred = x264_clip3( h->param.analyse.i_weighted_pred, X264_WEIGHTP_NONE, X264_WEIGHTP_SMART );
@@ -1807,6 +1814,11 @@ static int x264_encoder_try_reconfig( x264_t *h, x264_param_t *param, int *rc_re
     *rc_reconfig |= h->param.rc.f_rf_constant_max != param->rc.f_rf_constant_max;
     COPY( rc.f_rf_constant );
     COPY( rc.f_rf_constant_max );
+
+    /* Colorspace stuff */
+    COPY( vui.i_colmatrix );
+    COPY( vui.i_colorprim );
+    COPY( vui.i_transfer );
 #undef COPY
 
     return x264_validate_parameters( h, 0 );
